@@ -14,7 +14,8 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 @dataclass
 class IPRotationConfig:
     enabled: bool = True
-    rotate_every_n_scrolls: int = 5
+    min_scrolls_before_rotation: int = 5
+    max_scrolls_before_rotation: int = 10
     mode: str = "simulation"  # "simulation", "vpn_command", "proxy_list", "tor"
     vpn_reconnect_cmd: str = ""
     vpn_wait_sec: float = 6.0
@@ -65,6 +66,7 @@ class ScrollerState:
     current_isp: str = "Unknown"
     rotation_count: int = 0
     scrolls_since_rotation: int = 0
+    target_scrolls_for_rotation: int = 5
     ip_history: List[Dict[str, any]] = field(default_factory=list)
 
 
@@ -175,7 +177,7 @@ class ScrollerRunner:
             if len(self.state.logs) > 250:
                 self.state.logs.pop(0)
 
-    def record_ip(self, ip: str, location: str, isp: str, at_scroll: int):
+    def record_ip(self, ip: str, location: str, isp: str, at_scroll: int, batch_target: int = 0):
         with self._lock:
             self.state.current_ip = ip
             self.state.current_location = location
@@ -186,7 +188,8 @@ class ScrollerRunner:
                 "ip": ip,
                 "location": location,
                 "isp": isp,
-                "scroll_step": at_scroll
+                "scroll_step": at_scroll,
+                "batch_target": batch_target or self.state.target_scrolls_for_rotation
             })
 
     def get_state(self) -> ScrollerState:
@@ -211,6 +214,7 @@ class ScrollerRunner:
                 current_isp=self.state.current_isp,
                 rotation_count=self.state.rotation_count,
                 scrolls_since_rotation=self.state.scrolls_since_rotation,
+                target_scrolls_for_rotation=self.state.target_scrolls_for_rotation,
                 ip_history=list(self.state.ip_history)
             )
 
@@ -258,15 +262,22 @@ class ScrollerRunner:
         return None
 
     def _run_automation(self):
+        rot = self.config.rotation
+        initial_target = random.randint(
+            min(rot.min_scrolls_before_rotation, rot.max_scrolls_before_rotation),
+            max(rot.min_scrolls_before_rotation, rot.max_scrolls_before_rotation)
+        )
         with self._lock:
             self.state.status = "STARTING"
             self.state.start_time = time.time()
             self.state.scroll_count = 0
             self.state.rotation_count = 0
             self.state.scrolls_since_rotation = 0
+            self.state.target_scrolls_for_rotation = initial_target
             self.state.last_action = "Launching browser..."
 
         self.add_log(f"Launching Chromium (Headless: {self.config.headless})...", "INFO")
+        self.add_log(f"🎲 Initial dynamic target: {initial_target} scrolls before first IP rotation (range: {rot.min_scrolls_before_rotation}-{rot.max_scrolls_before_rotation}).", "INFO")
 
         playwright = None
         browser: Optional[Browser] = None
@@ -470,7 +481,7 @@ class ScrollerRunner:
                     self.state.last_delay = random_delay
                     self.state.last_action = action_text
 
-                self.add_log(f"Scroll #{self.state.scroll_count} ({self.state.scrolls_since_rotation}/{self.config.rotation.rotate_every_n_scrolls} before IP change): {action_text}", "SCROLL")
+                self.add_log(f"Scroll #{self.state.scroll_count} ({self.state.scrolls_since_rotation}/{self.state.target_scrolls_for_rotation} before IP change): {action_text}", "SCROLL")
 
                 if self.config.capture_screenshots and (self.state.scroll_count % 2 == 0 or is_at_bottom):
                     try:
@@ -485,8 +496,9 @@ class ScrollerRunner:
 
                 # --- CHECK IP ROTATION CONDITION ---
                 rot = self.config.rotation
-                if rot.enabled and self.state.scrolls_since_rotation >= rot.rotate_every_n_scrolls:
-                    self.add_log(f"⚡ Target of {rot.rotate_every_n_scrolls} scrolls reached! Rotating IP address...", "WARN")
+                if rot.enabled and self.state.scrolls_since_rotation >= self.state.target_scrolls_for_rotation:
+                    completed_target = self.state.target_scrolls_for_rotation
+                    self.add_log(f"⚡ Dynamic target of {completed_target} scrolls reached! Rotating IP address...", "WARN")
 
                     with self._lock:
                         self.state.status = "ROTATING_IP"
@@ -550,12 +562,20 @@ class ScrollerRunner:
                     if rot.mode != "simulation":
                         new_info = detect_public_ip(context if rot.mode in ("tor", "proxy_list") else None)
 
+                    # 6. Pick next random target for the upcoming cycle
+                    next_target = random.randint(
+                        min(rot.min_scrolls_before_rotation, rot.max_scrolls_before_rotation),
+                        max(rot.min_scrolls_before_rotation, rot.max_scrolls_before_rotation)
+                    )
+
                     with self._lock:
                         self.state.rotation_count += 1
                         self.state.scrolls_since_rotation = 0
+                        self.state.target_scrolls_for_rotation = next_target
 
-                    self.record_ip(new_info["ip"], new_info["country"], new_info["isp"], self.state.scroll_count)
+                    self.record_ip(new_info["ip"], new_info["country"], new_info["isp"], self.state.scroll_count, completed_target)
                     self.add_log(f"✅ IP Rotation Complete! Current IP: {new_info['ip']} ({new_info['country']})", "SUCCESS")
+                    self.add_log(f"🎲 Next dynamic target: {next_target} scrolls before next IP rotation (range: {rot.min_scrolls_before_rotation}-{rot.max_scrolls_before_rotation}).", "INFO")
 
                     # 6. Reload target URL with retry
                     self.add_log(f"Reloading target page: {target_url}...", "INFO")

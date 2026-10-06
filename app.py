@@ -168,22 +168,23 @@ enable_ip_rotation = st.sidebar.checkbox(
 )
 
 if enable_ip_rotation:
-    rotate_n = st.sidebar.number_input(
-        "Rotate IP after every N scrolls",
-        min_value=1,
-        max_value=50,
-        value=5,
+    rot_scroll_range = st.sidebar.slider(
+        "Random Scrolls Range before IP Change",
+        min_value=2,
+        max_value=30,
+        value=(5, 10),
         step=1,
-        help="After exactly this many scrolls, the app triggers an IP change and resumes scrolling."
+        help="Before each IP rotation, a dynamic random number of scrolls is chosen between these two values (e.g. 5 to 10) to prevent predictable traffic patterns."
     )
+    min_rot_scrolls, max_rot_scrolls = rot_scroll_range
 
     rot_mode_option = st.sidebar.selectbox(
         "IP Rotation Method",
         [
+            ("tor", "🧅 Local Tor SOCKS5 Proxy (Free - Recommended)"),
             ("simulation", "🧪 Test Simulation Mode (Instant Demo)"),
-            ("vpn_command", "🛡️ Custom VPN Reconnect Command"),
             ("proxy_list", "🔌 Proxy Pool / List (HTTP/SOCKS5)"),
-            ("tor", "🧅 Local Tor SOCKS5 Proxy (Free)")
+            ("vpn_command", "🛡️ Custom VPN Reconnect Command")
         ],
         format_func=lambda x: x[1],
         index=0
@@ -224,10 +225,10 @@ if enable_ip_rotation:
         st.sidebar.caption("Uses local Tor SOCKS5 proxy on `127.0.0.1:9050`")
         tor_control_port = st.sidebar.number_input("Tor Control Port", value=9051, step=1)
         tor_password = st.sidebar.text_input("Tor Control Password (if any)", value="", type="password")
-        st.sidebar.info("💡 To install & start Tor on Mac: `brew install tor && brew services start tor`")
+        st.sidebar.info("💡 Tor is active with auto-rotation on ControlPort 9051!")
 
     elif rot_mode_option == "simulation":
-        st.sidebar.info("💡 **Simulation Mode Active**: Automatically switches realistic international IPs every 5 scrolls so you can test the entire workflow immediately without requiring external VPN accounts!")
+        st.sidebar.info("💡 **Simulation Mode Active**: Automatically switches realistic international IPs every dynamic batch for offline testing without external networks.")
 
     restore_scroll = st.sidebar.checkbox(
         "Restore Scroll Position after IP Change",
@@ -235,7 +236,7 @@ if enable_ip_rotation:
         help="Remembers the exact pixel position and restores it after rotating IP."
     )
 else:
-    rotate_n = 5
+    min_rot_scrolls, max_rot_scrolls = 5, 10
     rot_mode_option = "simulation"
     vpn_cmd = ""
     vpn_wait = 6.0
@@ -368,7 +369,8 @@ if start_clicked:
     else:
         ip_rot_config = IPRotationConfig(
             enabled=enable_ip_rotation,
-            rotate_every_n_scrolls=int(rotate_n),
+            min_scrolls_before_rotation=int(min_rot_scrolls),
+            max_scrolls_before_rotation=int(max_rot_scrolls),
             mode=rot_mode_option,
             vpn_reconnect_cmd=vpn_cmd,
             vpn_wait_sec=float(vpn_wait),
@@ -412,9 +414,12 @@ def render_live_dashboard():
     if runner is None:
         state = ScrollerState(status="IDLE", last_action="Awaiting user command")
         target_rot = 5
+        range_str = "5-10"
     else:
         state = runner.get_state()
-        target_rot = runner.config.rotation.rotate_every_n_scrolls
+        target_rot = state.target_scrolls_for_rotation
+        rot_cfg = runner.config.rotation
+        range_str = f"{rot_cfg.min_scrolls_before_rotation}-{rot_cfg.max_scrolls_before_rotation}"
 
     # Status Badge Mapping
     status_html_map = {
@@ -445,10 +450,10 @@ def render_live_dashboard():
         if state.status in ("RUNNING", "ROTATING_IP", "STARTING"):
             remaining_to_rot = max(0, target_rot - state.scrolls_since_rotation)
             st.metric("Next IP Change", f"in {remaining_to_rot} scrolls")
-            st.caption(f"Progress: {state.scrolls_since_rotation}/{target_rot} scrolls done")
+            st.caption(f"Batch: {state.scrolls_since_rotation}/{target_rot} (Dynamic target from {range_str})")
         else:
             st.metric("Rotations Done", f"{state.rotation_count} times")
-            st.caption(f"Triggers every {target_rot} scrolls")
+            st.caption(f"Random target range: {range_str} scrolls")
     with m4:
         st.markdown(f"**Current Public IP**<br><span class='ip-badge'>{state.current_ip}</span>", unsafe_allow_html=True)
         if state.current_location:
@@ -489,11 +494,12 @@ def render_live_dashboard():
                     "Public IP": h.get("ip", ""),
                     "Location / Country": h.get("location", ""),
                     "ISP / Network": h.get("isp", ""),
-                    "Triggered at Scroll": f"Scroll #{h.get('scroll_step', 0)}"
+                    "Triggered at Scroll": f"Scroll #{h.get('scroll_step', 0)}",
+                    "Batch Target": f"{h.get('batch_target', '--')} scrolls"
                 })
             st.table(ip_table_data)
         else:
-            st.info("No IP rotation events recorded yet. Start automation to see the IP timeline populate every 5 scrolls!")
+            st.info("No IP rotation events recorded yet. Start automation to see the IP timeline populate as dynamic batches complete!")
 
     with tab_logs:
         log_html_lines = []

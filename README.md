@@ -10,8 +10,8 @@ A high-performance local web automation dashboard built with **Streamlit** and *
    - Eliminates fixed X/Y coordinates. Every scroll step computes a random pixel delta within user-defined min/max bounds (`min_scroll_px` to `max_scroll_px`).
    - Employs native smooth scrolling (`behavior: 'smooth'`) to prevent unnatural jumps.
 
-2. **Automated IP Address Rotation (e.g. Every 5 Scrolls)**:
-   - **Configurable Batch Interval**: Triggers an IP change every 5 scrolls (or any custom count).
+2. **Automated Dynamic IP Address Rotation (Random Range: 5 to 10 Scrolls)**:
+   - **Dynamic Unpredictable Batches**: Instead of a fixed N count, the engine picks a random number of scrolls (e.g., between 5 and 10) before each IP rotation cycle, completely eliminating periodic pattern detection.
    - **State & Scroll Position Preservation**: Caches the exact `window.scrollY` coordinate before rotating IP. After reconnecting under a new identity, it smoothly navigates back and restores the exact scroll position to continue scrolling seamlessly.
    - **Supported Rotation Methods**:
      - 🧪 **Simulation Mode**: Instantly rotates realistic global IPs with real geolocation metadata for quick offline testing.
